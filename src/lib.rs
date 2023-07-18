@@ -1,8 +1,8 @@
 //! Parse Debian and Ubuntu distro-info-data files and provide them as easy-to-consume Rust data
 //! structures.
 //!
-//! Use [``UbuntuDistroInfo``](struct.UbuntuDistroInfo.html) to access the Ubuntu data.  (The
-//! Debian implementation has yet to happen.)
+//! Use [``UbuntuDistroInfo``](struct.UbuntuDistroInfo.html) to access the Ubuntu data, and
+//! [``DebianDistroInfo``](struct.DebianDistroInfo.html) to access the Debian data.
 extern crate chrono;
 extern crate csv;
 #[macro_use]
@@ -138,62 +138,8 @@ pub trait DistroInfo: Sized {
             .collect()
     }
 
-    /// Returns a vector of `DistroRelease`s for releases that were released and supported at the
-    /// given date, using Ubuntu's rules
-    fn ubuntu_supported(&self, date: NaiveDate) -> Vec<&DistroRelease> {
-        self.releases()
-            .iter()
-            .filter(|distro_release| distro_release.ubuntu_supported_at(date))
-            .collect()
-    }
-
-    /// Returns a vector of `DistroRelease`s for releases that were released but no longer
-    /// supported at the given date, using Ubuntu's rules
-    fn ubuntu_unsupported(&self, date: NaiveDate) -> Vec<&DistroRelease> {
-        self.released(date)
-            .into_iter()
-            .filter(|distro_release| !distro_release.ubuntu_supported_at(date))
-            .collect()
-    }
-
-    /// Returns a vector of `DistroRelease`s for releases that were in development at the given
-    /// date
-    fn ubuntu_devel(&self, date: NaiveDate) -> Vec<&DistroRelease> {
-        self.all_at(date)
-            .into_iter()
-            .filter(|distro_release| match distro_release.release() {
-                Some(release) => date < *release,
-                None => false,
-            })
-            .collect()
-    }
-
-    /// Returns a vector of `DistroRelease`s for releases that were in development at the given
-    /// date
-    fn debian_devel(&self, date: NaiveDate) -> Vec<&DistroRelease> {
-        self.all_at(date)
-            .into_iter()
-            .filter(|distro_release| match distro_release.release() {
-                Some(release) => date < *release,
-                None => true,
-            })
-            .filter(|distro_release| distro_release.version().is_none())
-            .collect::<Vec<_>>()
-            .first()
-            .copied()
-            .map(|dr| vec![dr])
-            .unwrap_or_else(std::vec::Vec::new)
-    }
-
     /// Returns a `DistroRelease` for the latest supported, non-EOL release at the given date
-    fn latest(&self, date: NaiveDate) -> Option<&DistroRelease> {
-        self.ubuntu_supported(date)
-            .into_iter()
-            .filter(|distro_release| distro_release.released_at(date))
-            .collect::<Vec<_>>()
-            .last()
-            .copied()
-    }
+    fn latest(&self, date: NaiveDate) -> Option<&DistroRelease>;
 
     /// Returns a `DistroRelease` for the stable release prior to the current one (if one exists)
     fn oldstable(&self, date: NaiveDate) -> Option<&DistroRelease> {
@@ -227,6 +173,47 @@ impl DistroInfo for UbuntuDistroInfo {
     fn from_vec(releases: Vec<DistroRelease>) -> Self {
         Self { releases }
     }
+
+    fn latest(&self, date: NaiveDate) -> Option<&DistroRelease> {
+        self.supported(date)
+            .into_iter()
+            .filter(|distro_release| distro_release.released_at(date))
+            .collect::<Vec<_>>()
+            .last()
+            .copied()
+    }
+}
+
+impl UbuntuDistroInfo {
+    /// Returns a vector of `DistroRelease`s for releases that were in development at the given
+    /// date
+    pub fn devel(&self, date: NaiveDate) -> Vec<&DistroRelease> {
+        self.all_at(date)
+            .into_iter()
+            .filter(|distro_release| match distro_release.release() {
+                Some(release) => date < *release,
+                None => false,
+            })
+            .collect()
+    }
+
+    /// Returns a vector of `DistroRelease`s for releases that were released and supported at the
+    /// given date, using Ubuntu's rules
+    fn supported(&self, date: NaiveDate) -> Vec<&DistroRelease> {
+        self.releases()
+            .iter()
+            .filter(|distro_release| distro_release.ubuntu_supported_at(date))
+            .collect()
+    }
+
+    /// Returns a vector of `DistroRelease`s for releases that were released but no longer
+    /// supported at the given date, using Ubuntu's rules
+    fn unsupported(&self, date: NaiveDate) -> Vec<&DistroRelease> {
+        self.released(date)
+            .into_iter()
+            .filter(|distro_release| !distro_release.ubuntu_supported_at(date))
+            .collect()
+    }
 }
 
 impl IntoIterator for UbuntuDistroInfo {
@@ -244,7 +231,7 @@ pub struct DebianDistroInfo {
 
 impl DebianDistroInfo {
     pub fn stable(&self, date: NaiveDate) -> Option<&DistroRelease> {
-        self.released(date).into_iter().rev().next()
+        self.released(date).into_iter().next_back()
     }
 
     pub fn oldstable(&self, date: NaiveDate) -> Option<&DistroRelease> {
@@ -277,6 +264,23 @@ impl DebianDistroInfo {
             .find(|release| release.series() == "experimental")
             .unwrap()
     }
+
+    /// Returns a vector of `DistroRelease`s for releases that were in development at the given
+    /// date
+    pub fn devel(&self, date: NaiveDate) -> Vec<&DistroRelease> {
+        self.all_at(date)
+            .into_iter()
+            .filter(|distro_release| match distro_release.release() {
+                Some(release) => date < *release,
+                None => true,
+            })
+            .filter(|distro_release| distro_release.version().is_none())
+            .collect::<Vec<_>>()
+            .first()
+            .copied()
+            .map(|dr| vec![dr])
+            .unwrap_or_else(std::vec::Vec::new)
+    }
 }
 
 impl DistroInfo for DebianDistroInfo {
@@ -290,6 +294,10 @@ impl DistroInfo for DebianDistroInfo {
     /// Initialise an DebianDistroInfo struct from a vector of DistroReleases
     fn from_vec(releases: Vec<DistroRelease>) -> Self {
         Self { releases }
+    }
+
+    fn latest(&self, date: NaiveDate) -> Option<&DistroRelease> {
+        self.stable(date)
     }
 }
 
@@ -378,7 +386,7 @@ mod tests {
         // Use bionic's release date to confirm we don't have a boundary issue
         let date = naive_date(2018, 4, 26);
         let supported_series: Vec<_> = ubuntu_distro_info
-            .ubuntu_supported(date)
+            .supported(date)
             .iter()
             .map(|distro_release| distro_release.series())
             .collect();
@@ -394,7 +402,7 @@ mod tests {
         // Use bionic's release date to confirm we don't have a boundary issue
         let date = naive_date(2006, 11, 1);
         let unsupported_series: Vec<_> = ubuntu_distro_info
-            .ubuntu_unsupported(date)
+            .unsupported(date)
             .iter()
             .map(|distro_release| distro_release.series())
             .collect();
@@ -407,7 +415,7 @@ mod tests {
         // Use artful's EOL date to confirm we don't have a boundary issue
         let date = naive_date(2018, 7, 19);
         let supported_series: Vec<_> = ubuntu_distro_info
-            .ubuntu_supported(date)
+            .supported(date)
             .iter()
             .map(|distro_release| distro_release.series())
             .collect();
@@ -422,7 +430,7 @@ mod tests {
         let ubuntu_distro_info = UbuntuDistroInfo::new().unwrap();
         let date = naive_date(2011, 5, 14);
         let supported_series: Vec<_> = ubuntu_distro_info
-            .ubuntu_supported(date)
+            .supported(date)
             .iter()
             .map(|distro_release| distro_release.series())
             .collect();
@@ -434,7 +442,7 @@ mod tests {
         let ubuntu_distro_info = UbuntuDistroInfo::new().unwrap();
         let date = naive_date(2018, 4, 26);
         let devel_series: Vec<_> = ubuntu_distro_info
-            .ubuntu_devel(date)
+            .devel(date)
             .iter()
             .map(|distro_release| distro_release.series())
             .collect();
